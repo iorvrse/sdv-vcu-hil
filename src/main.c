@@ -201,7 +201,7 @@ void *thread_network_rx(void *arg)
             TV_U_Fz[3] = m2v->Fz_RR / 10.0f;
 
             // 3. EKSEKUSI MODEL TORQUE VECTORING
-            Torque_Vectoring_step(Torque_Vectoring_MPtr, TV_U_Vx_Thrl, TV_U_Vx, TV_U_Vy, 
+            Torque_Vectoring_step(Torque_Vectoring_MPtr, TV_U_Vx_des, TV_U_Vx, TV_U_Vy, 
                                   TV_U_AngWheel, TV_U_r, TV_U_Fy, TV_U_Fz,
                                   TV_Y_Tm, TV_Y_Fx_opt, &TV_Y_Mx_total, &TV_Y_Fx_total,
                                   &TV_Y_Mzd, &TV_Y_r_des, TV_Y_Ca, &TV_Y_beta);
@@ -273,7 +273,7 @@ int main(void)
         // PORT_SRC_CORNERS[i] digunakan sebagai ID lokal VCU, 
         // PORT_CORNERS[i] adalah port yang didengar oleh STM32 (5051, 5052, dst)
         
-        if (udp_tx_init(&tx_corner[i], PORT_SRC_CORNERS[i], 0, IP_CORNERS[i]) < 0)
+        if (udp_tx_init(&tx_corner[i], PORT_CORNERS[i], 0, IP_CORNERS[i]) < 0)
         {
             fprintf(stderr, "Gagal membuat soket TX untuk roda %d\n", i);
             return -1;
