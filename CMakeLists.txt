@@ -7,7 +7,7 @@ add_executable(rtlinux_app
     src/main.c
     src/steer.c
     src/comm.c
-    src/FWS.c
+    src/FWIS.c
     src/speedControl.c
     src/Torque_Vectoring.c
     src/Torque_Vectoring_data.c

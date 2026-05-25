@@ -2,53 +2,49 @@
 #define MAIN_H
 
 #include <stdint.h>
-#include <netinet/in.h>
-#include <pthread.h>
-#include <time.h>
-
-// Library Utama
-#include "comm.h"
-#include "steer.h"
 #include "Torque_Vectoring.h"
 
-// ==========================================
-// KONFIGURASI JARINGAN
-// ==========================================
+// Network and communication config
 #define CORNER_COUNT 4
 
-#define PORT_RX           5055
-#define PORT_TX_PC        5060
-#define PORT_LAPTOP       4093
+#define MATLAB_PORT 4093
+#define VCU_PORT    5055
 
-// Alamat IP 4 Roda (FL, FR, RL, RR)
-extern const char *IP_CORNERS[CORNER_COUNT];
-extern const int PORT_CORNERS[CORNER_COUNT];
-extern const int CornerHeaders[CORNER_COUNT];
+#define CORNER_FRAME_HEADER 0xAA
+#define MATLAB_FRAME_HEADER 0xCE
 
-typedef struct __attribute__((packed)) 
+#define CORNER_FRAME_ID 0x05
+#define MATLAB_FRAME_ID 0x05
+
+// 4WIS
+#define FWIS_WB     3.1f
+#define FWIS_CG     1.55f
+#define FWIS_WT     1.49f
+#define FWIS_HWB    1.55f
+#define FWIS_HWT    0.745f
+
+typedef enum
 {
-    uint8_t  Header;
-    uint8_t  id;
-    uint16_t Trq;
-    uint16_t Vx;
-    uint16_t Vx_Wheel;
-    uint16_t Vx_Thrl;
-    uint16_t Steer_Wheel;
-    uint32_t Mzd;
-    uint16_t seq;
-} VCUToCorner;
+    ID_FRONT_LEFT_WHEEL = 0x01,
+    ID_FRONT_RIGHT_WHEEL,
+    ID_REAR_LEFT_WHEEL,
+    ID_REAR_RIGHT_WHEEL,
+    ID_PC_MATLAB,
+    ID_VCU
+} DeviceID;
 
-typedef struct __attribute__((packed)) {
-    uint8_t Header;
+typedef struct __attribute__((packed))
+{
+    uint8_t header;
     uint8_t id;
-    uint16_t Vx_Thrl;
+    uint16_t Vx_des;
     uint16_t Vx;
     uint16_t Vy;
     uint16_t angWheel_FL;
     uint16_t angWheel_FR;
     uint16_t angWheel_RL;
     uint16_t angWheel_RR;
-    uint16_t yawrate;
+    uint16_t yawRate;
     uint32_t Fy_FL;
     uint32_t Fy_FR;
     uint32_t Fy_RL;
@@ -58,33 +54,45 @@ typedef struct __attribute__((packed)) {
     uint32_t Fz_RL;
     uint32_t Fz_RR;
     uint8_t seq;
-} Matlab2VCU;
+} matlab_recv_frame_t;
 
-typedef struct __attribute__((packed)) {
-    uint8_t Header;
+typedef struct __attribute__((packed))
+{
+    uint8_t header;
     uint8_t id;
-    uint16_t Trq;
-    uint8_t seq;
-} VCU2Corner_TV;
+    uint16_t Tm_ref;
+    uint16_t Vx;
+    uint16_t Vx_wheel;
+    uint16_t Vx_des;
+    uint16_t Ang_ref;
+    uint32_t Mzd;
+    uint16_t seq;
+} corner_send_frame_t;
 
-typedef struct __attribute__((packed)) {
-    uint8_t Header;
-    uint8_t id;
-    uint16_t Trq_FL;
-    uint16_t Trq_FR;
-    uint16_t Trq_RL;
-    uint16_t Trq_RR;
-    uint8_t seq;
-} VCU2Matlab_TV;
+typedef struct
+{
+    RT_MODEL_Torque_Vectoring_T Torque_Vectoring_M_;
+    RT_MODEL_Torque_Vectoring_T *const Torque_Vectoring_MPtr;
+    DW_Torque_Vectoring_T Torque_Vectoring_DW;
+    B_Torque_Vectoring_T Torque_Vectoring_B;
 
-// ==========================================
-// DEKLARASI GLOBAL
-// ==========================================
-extern udp_sock_t tx_corner[CORNER_COUNT];
-extern udp_sock_t tx_matlab;
+    real_T TV_U_Vx_des;
+    real_T TV_U_Vx;
+    real_T TV_U_Vy;
+    real_T TV_U_AngWheel[4];
+    real_T TV_U_r;
+    real_T TV_U_Fy[4];
+    real_T TV_U_Fz[4];
 
-// Fungsi Utilitas
-void try_set_affinity(pthread_t thread, int cpu_id);
-void try_set_realtime(pthread_t thread, int priority);
+    real_T TV_Y_Tm[4];
+    real_T TV_Y_Fx_opt[4];
+    real_T TV_Y_Mx_total;
+    real_T TV_Y_Fx_total;
+    real_T TV_Y_Mzd;
+    real_T TV_Y_r_des;
+    real_T TV_Y_beta_des;
+    real_T TV_Y_Ca[2];
+    real_T TV_Y_beta;
+} torque_vectoring_t;
 
 #endif // MAIN_H

@@ -6,49 +6,6 @@
 #include <unistd.h>
 #include <fcntl.h>
 
-void fill_vcu_ref_frame(vcu_ref_frame_t *f, uint8_t id,
-                        int16_t angleRef, uint16_t speedRef, uint8_t brakeRef,
-                        uint8_t seq)
-{
-    f->header   = REF_FRAME_HEADER;
-    f->id       = id;
-    f->angleRef = angleRef;
-    f->speedRef = speedRef;
-    f->brakeRef = brakeRef;
-    f->seq      = seq;
-}
-
-void fill_ref_calc_frame(calc_frame_t *f, uint8_t id,
-                            uint16_t angle_FL, uint16_t angle_FR,
-                            uint16_t angle_RL, uint16_t angle_RR,
-                            uint16_t speed_FL, uint16_t speed_FR,
-                            uint16_t speed_RL, uint16_t speed_RR,
-                            uint8_t seq)
-{
-    f->header   = CALC_REF_FRAME_HEADER;
-    f->id       = id;
-    f->angle_FL = angle_FL;
-    f->angle_FR = angle_FR;
-    f->angle_RL = angle_RL;
-    f->angle_RR = angle_RR;
-    f->speed_FL = speed_FL;
-    f->speed_FR = speed_FR;
-    f->speed_RL = speed_RL;
-    f->speed_RR = speed_RR;
-    f->seq      = seq;
-}
-
-void fill_corner_frame(corner_frame_t *f, uint8_t header,
-                        int16_t angle, uint16_t speed,
-                        uint8_t seq)
-{
-    f->header   = header;
-    f->id       = ID_VCU;
-    f->angle    = angle;
-    f->speed    = speed;
-    f->seq      = seq;
-}
-
 int udp_tx_init(udp_sock_t *tx, uint16_t src_port, int is_broadcast, const char* target_ip) 
 {
     memset(tx, 0, sizeof(*tx));
