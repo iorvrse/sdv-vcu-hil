@@ -9,7 +9,6 @@
 #define BUFFER_SIZE 64
 #define TIMEOUT_MS  1000
 
-// Konstanta resolusi (0.1 satuan)
 #define BRAKE_MAX_RAW   255
 #define ACCEL_MAX_RAW   255
 #define STEER_MAX_RAW   32767
@@ -20,9 +19,9 @@
 
 typedef struct
 {
-    uint8_t brake;   // 0–100 (resolusi 0.01)
-    uint16_t accel;   // 0–10000 (resolusi 0.01)
-    int16_t steer;   // 0–8000 (resolusi 0.01)
+    uint8_t brake;   // 0–100 (resolution 0.01)
+    uint16_t accel;   // 0–10000 (resolution 0.01)
+    int16_t steer;   // 0–8000 (resolution 0.01)
 } steer_data_t;
 
 typedef struct steer_context steer_ctx_t;

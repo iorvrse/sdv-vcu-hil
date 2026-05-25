@@ -1,6 +1,5 @@
 #include "steer.h"
 #include <libusb-1.0/libusb.h>
-#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,16 +11,12 @@ struct steer_context
     struct libusb_transfer *tf;
     uint8_t usb_buffer[BUFFER_SIZE];
     
-    pthread_mutex_t data_mutex;
     steer_data_t latest_data;
-    
     int keep_reading;
 };
 
-// libusb callback function
 static void LIBUSB_CALL steer_callback(struct libusb_transfer *transfer)
 {
-    // pass ctx pointer into the user_data field of the transfer
     steer_ctx_t *ctx = (steer_ctx_t*)transfer->user_data;
 
     if (transfer->status == LIBUSB_TRANSFER_COMPLETED && transfer->actual_length >= 8)
@@ -32,12 +27,9 @@ static void LIBUSB_CALL steer_callback(struct libusb_transfer *transfer)
         uint8_t accel_raw  = data[5];
         int16_t steer_raw  = (int16_t)((data[7] << 8) | data[6]);
 
-        // Lock, update data, unlock
-        pthread_mutex_lock(&ctx->data_mutex);
-        ctx->latest_data.brake = ((brake_raw * BRAKE_MAX_SCALED) / BRAKE_MAX_RAW);
-        ctx->latest_data.accel = ((accel_raw * ACCEL_MAX_SCALED) / ACCEL_MAX_RAW);
-        ctx->latest_data.steer = ((steer_raw * STEER_MAX_SCALED) / STEER_MAX_RAW);
-        pthread_mutex_unlock(&ctx->data_mutex);
+        ctx->latest_data.brake = (uint8_t)((brake_raw * BRAKE_MAX_SCALED) / BRAKE_MAX_RAW);
+        ctx->latest_data.accel = (uint16_t)((accel_raw * ACCEL_MAX_SCALED) / ACCEL_MAX_RAW);
+        ctx->latest_data.steer = (int16_t)((steer_raw * STEER_MAX_SCALED) / STEER_MAX_RAW);
     }
 
     // Resubmit transfer to keep the stream alive
@@ -52,13 +44,11 @@ steer_ctx_t* steer_init(void)
     steer_ctx_t *ctx = (steer_ctx_t *)calloc(1, sizeof(steer_ctx_t));
     if (!ctx) return NULL;
 
-    pthread_mutex_init(&ctx->data_mutex, NULL);
     ctx->keep_reading = 0;
 
     int r = libusb_init(&ctx->usb_ctx);
     if (r < 0)
     {
-        pthread_mutex_destroy(&ctx->data_mutex);
         free(ctx);
         return NULL;
     }
@@ -67,7 +57,6 @@ steer_ctx_t* steer_init(void)
     if (!ctx->devh)
     {
         libusb_exit(ctx->usb_ctx);
-        pthread_mutex_destroy(&ctx->data_mutex);
         free(ctx);
         return NULL;
     }
@@ -79,7 +68,6 @@ steer_ctx_t* steer_init(void)
     {
         libusb_close(ctx->devh);
         libusb_exit(ctx->usb_ctx);
-        pthread_mutex_destroy(&ctx->data_mutex);
         free(ctx);
         return NULL;
     }
@@ -100,19 +88,16 @@ int steer_start(steer_ctx_t *ctx)
 
     ctx->keep_reading = 1;
 
-    // Fill the transfer ticket. Notice we pass 'ctx' as the user_data (second to last arg)
-    libusb_fill_interrupt_transfer(ctx->tf, ctx->devh, ENDPOINT_IN, 
-                                   ctx->usb_buffer, BUFFER_SIZE, 
+    libusb_fill_interrupt_transfer(ctx->tf, ctx->devh, ENDPOINT_IN,
+                                   ctx->usb_buffer, BUFFER_SIZE,
                                    steer_callback, ctx, TIMEOUT_MS);
 
-    // Submit the very first transfer to kick off the chain
     int r = libusb_submit_transfer(ctx->tf);
     if (r < 0)
     {
         ctx->keep_reading = 0;
         return r;
     }
-
     return 0;
 }
 
@@ -130,23 +115,19 @@ int steer_process_events(steer_ctx_t *ctx, int timeout_ms)
 void steer_get_latest_data(steer_ctx_t *ctx, steer_data_t *out)
 {
     if (!ctx || !out) return;
-    
-    pthread_mutex_lock(&ctx->data_mutex);
     *out = ctx->latest_data;
-    pthread_mutex_unlock(&ctx->data_mutex);
 }
 
 void steer_close(steer_ctx_t *ctx)
 {
     if (!ctx) return;
-    
-    ctx->keep_reading = 0; // Stop resubmitting
+
+    ctx->keep_reading = 0;
 
     if (ctx->tf)
     {
         libusb_cancel_transfer(ctx->tf);
-        // Process one last event to allow the cancellation callback to finish
-        struct timeval tv = {0, 100000}; 
+        struct timeval tv = {0, 100000};
         libusb_handle_events_timeout_completed(ctx->usb_ctx, &tv, NULL);
         libusb_free_transfer(ctx->tf);
     }
@@ -162,6 +143,5 @@ void steer_close(steer_ctx_t *ctx)
         libusb_exit(ctx->usb_ctx);
     }
 
-    pthread_mutex_destroy(&ctx->data_mutex);
     free(ctx);
 }
