@@ -219,44 +219,43 @@ void *thread_net_rx(void *arg)
 }
 
 // =================================================================
-// Control thread – 2 ms periodic, with debug logging
+// Control thread
 // =================================================================
 void *thread_control(void *arg)
 {
     (void)arg;
 
-    struct timespec next;
-    clock_gettime(CLOCK_MONOTONIC, &next);
-    uint16_t seq = 0;
+    struct timespec thread_ts;
+    clock_gettime(CLOCK_MONOTONIC, &thread_ts);
+    uint8_t seq = 0;
     uint32_t cycle = 0;
     const uint32_t debug_interval = 100;   // print every 100 cycles (200 ms)
     struct timespec cycle_start;
 
-    printf("[THREAD] Control active (2 ms period).\n");
+    printf("[THREAD] Control active (1 ms period).\n");
 
     while (keep_running)
     {
         clock_gettime(CLOCK_MONOTONIC, &cycle_start);  // for jitter measurement
 
-        // 1. Latest steer
+        // Latest steer
         int steer_idx_local = atomic_load_explicit(&steer_idx, memory_order_acquire);
         steer_sample_t cur_steer = steer_buf[steer_idx_local];
         float steer_deg = (float)cur_steer.steer / 100.0f;
 
-        // 2. Latest MATLAB
+        // Latest MATLAB
         int matlab_idx_local = atomic_load_explicit(&matlab_idx, memory_order_acquire);
         matlab_recv_frame_t cur_matlab = matlab_buf[matlab_idx_local];
 
-        // 3. Compute
+        // Compute
         FWIS_Compute(&fwis, steer_deg, cur_matlab.Vx / 100.0f);
         Torque_Vectoring_Compute(&cur_matlab);
 
-        // 4. Send to corners
+        // Send to corners
         seq++;
         corner_send_frame_t corner_frame =
         {
             .header = CORNER_FRAME_HEADER,
-            .id = CORNER_FRAME_ID,
             .Vx = cur_matlab.Vx,
             .Vx_des = cur_matlab.Vx_des,
             .Vx_wheel = 0,  // FIXME
@@ -265,6 +264,7 @@ void *thread_control(void *arg)
 
         for (int i = 0; i < CORNER_COUNT; i++)
         {
+            corner_frame.id = i;
             corner_frame.Tm_ref  = (uint16_t)((tv.TV_Y_Tm[i] + 120.0f) * 100.0f);
             corner_frame.Ang_ref = (uint16_t)((fwis.output[i] + 40.0f) * 100.0f);
             corner_frame.seq = seq;
@@ -275,10 +275,10 @@ void *thread_control(void *arg)
         cycle++;
         if (DEBUG_ENABLE && (cycle % debug_interval) == 0)
         {
-            struct timespec now;
-            clock_gettime(CLOCK_MONOTONIC, &now);
-            long jitter_us = (now.tv_sec - cycle_start.tv_sec) * 1000000L +
-                             (now.tv_nsec - cycle_start.tv_nsec) / 1000L;
+            struct timespec debug_ts;
+            clock_gettime(CLOCK_MONOTONIC, &debug_ts);
+            long jitter_us = (debug_ts.tv_sec - cycle_start.tv_sec) * 1000000L +
+                             (debug_ts.tv_nsec - cycle_start.tv_nsec) / 1000L;
 
             DEBUG_LOG("[Ctrl cycle %u] seq=%u steer=%.2f° Vx=%.2f "
                    "Tm[Nm]: FL=%.2f FR=%.2f RL=%.2f RR=%.2f "
@@ -288,14 +288,14 @@ void *thread_control(void *arg)
                    tv.TV_Y_Mzd, fwis.output[0], jitter_us);
         }
 
-        // 2 ms sleep
-        next.tv_nsec += 2000000;
-        if (next.tv_nsec >= 1000000000)
+        // 1 ms sleep
+        thread_ts.tv_nsec += 1000000;
+        if (thread_ts.tv_nsec >= 1000000000)
         {
-            next.tv_sec++;
-            next.tv_nsec -= 1000000000;
+            thread_ts.tv_sec++;
+            thread_ts.tv_nsec -= 1000000000;
         }
-        clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next, NULL);
+        clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &thread_ts, NULL);
     }
 
     return NULL;

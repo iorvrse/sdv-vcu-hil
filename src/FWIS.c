@@ -6,8 +6,8 @@ static float map_value(float x, float in_min, float in_max, float out_min, float
     return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
 
-static inline float deg2rad(float deg) { return deg * (M_PI / 180.0f); }
-static inline float rad2deg(float rad) { return rad * (180.0f / M_PI); }
+#define DEG_TO_RAD(deg) ((deg) * (M_PI / 180.0f))
+#define RAD_TO_DEG(rad) ((rad) * (180.0f / M_PI))
 
 void FWIS_Init(fwis_t *fwis, float wb, float cg, float wt, float Hwb, float Hwt)
 {
@@ -34,7 +34,7 @@ void FWIS_Compute(fwis_t *fwis, float steer_deg, float Vx)
     fwis->R1 = 0;
 
     // measure turning radius
-    float steer_rad = deg2rad(steer_deg);
+    float steer_rad = DEG_TO_RAD(steer_deg);
     float tan_val = tanf(fabsf(steer_rad));
 
     if (fabsf(steer_deg) < 1e-3) fwis->R1 = 0;
@@ -43,9 +43,9 @@ void FWIS_Compute(fwis_t *fwis, float steer_deg, float Vx)
     fwis->yo = (steer_deg >= 0) ? fwis->R1 : -fwis->R1;
 
     // measure wheel angle
-    float of = rad2deg(atanf(fwis->cg / (fwis->R1 + fwis->Hwt)));
-    float ir = rad2deg(atanf((eff_len - fwis->wb) / (fwis->R1 - fwis->Hwt)));
-    float or = rad2deg(atanf((eff_len - fwis->wb) / (fwis->R1 + fwis->Hwt)));
+    float of = RAD_TO_DEG(atanf(fwis->cg / (fwis->R1 + fwis->Hwt)));
+    float ir = RAD_TO_DEG(atanf((eff_len - fwis->wb) / (fwis->R1 - fwis->Hwt)));
+    float or = RAD_TO_DEG(atanf((eff_len - fwis->wb) / (fwis->R1 + fwis->Hwt)));
 
     if (steer_deg < 0)
     {

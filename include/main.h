@@ -10,10 +10,9 @@
 #define MATLAB_PORT 4093
 #define VCU_PORT    5055
 
-#define CORNER_FRAME_HEADER 0xAA
-#define MATLAB_FRAME_HEADER 0xCE
+#define MATLAB_FRAME_HEADER 0xAA
+#define CORNER_FRAME_HEADER 0xCA
 
-#define CORNER_FRAME_ID 0x05
 #define MATLAB_FRAME_ID 0x05
 
 // 4WIS
@@ -66,7 +65,7 @@ typedef struct __attribute__((packed))
     uint16_t Vx_des;
     uint16_t Ang_ref;
     uint32_t Mzd;
-    uint16_t seq;
+    uint8_t seq;
 } corner_send_frame_t;
 
 typedef struct
