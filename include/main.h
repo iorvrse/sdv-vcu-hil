@@ -37,21 +37,12 @@ typedef struct __attribute__((packed))
     uint8_t header;
     uint8_t id;
     uint16_t Vx;
-    uint16_t Vx_wheel;
     uint16_t Vy;
-    uint16_t angWheel_FL;
-    uint16_t angWheel_FR;
-    uint16_t angWheel_RL;
-    uint16_t angWheel_RR;
+    uint16_t angWheel[4];
     uint16_t yawRate;
-    uint32_t Fy_FL;
-    uint32_t Fy_FR;
-    uint32_t Fy_RL;
-    uint32_t Fy_RR;
-    uint32_t Fz_FL;
-    uint32_t Fz_FR;
-    uint32_t Fz_RL;
-    uint32_t Fz_RR;
+    uint32_t Fy[4];
+    uint32_t Fz[4];
+    uint16_t Vx_wheel[4];
     uint8_t seq;
 } matlab_recv_frame_t;
 

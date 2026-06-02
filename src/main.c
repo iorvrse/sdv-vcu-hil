@@ -78,24 +78,24 @@ void Torque_Vectoring_Compute(const matlab_recv_frame_t *m2v, float *vx_des)
 {
     tv.TV_U_Vx_des  = *vx_des;
     tv.TV_U_Vx      = m2v->Vx / 100.0f;
-    tv.TV_U_Vy      = m2v->Vy / 100.0f;
+    tv.TV_U_Vy      = (m2v->Vy / 100.0f) - 10.0f;
 
-    tv.TV_U_AngWheel[0] = (m2v->angWheel_FL / 1000.0f) - 0.7f;
-    tv.TV_U_AngWheel[1] = (m2v->angWheel_FR / 1000.0f) - 0.7f;
-    tv.TV_U_AngWheel[2] = (m2v->angWheel_RL / 1000.0f) - 0.7f;
-    tv.TV_U_AngWheel[3] = (m2v->angWheel_RR / 1000.0f) - 0.7f;
+    tv.TV_U_AngWheel[0] = (m2v->angWheel[0] / 1000.0f) - 0.7f;
+    tv.TV_U_AngWheel[1] = (m2v->angWheel[1] / 1000.0f) - 0.7f;
+    tv.TV_U_AngWheel[2] = (m2v->angWheel[2] / 1000.0f) - 0.7f;
+    tv.TV_U_AngWheel[3] = (m2v->angWheel[3] / 1000.0f) - 0.7f;
 
     tv.TV_U_r = (m2v->yawRate / 1000.0f) - 0.7f;
 
-    tv.TV_U_Fy[0] = (m2v->Fy_FL / 10.0f) - 9000.0f;
-    tv.TV_U_Fy[1] = (m2v->Fy_FR / 10.0f) - 9000.0f;
-    tv.TV_U_Fy[2] = (m2v->Fy_RL / 10.0f) - 9000.0f;
-    tv.TV_U_Fy[3] = (m2v->Fy_RR / 10.0f) - 9000.0f;
+    tv.TV_U_Fy[0] = (m2v->Fy[0] / 10.0f) - 9000.0f;
+    tv.TV_U_Fy[1] = (m2v->Fy[1] / 10.0f) - 9000.0f;
+    tv.TV_U_Fy[2] = (m2v->Fy[2] / 10.0f) - 9000.0f;
+    tv.TV_U_Fy[3] = (m2v->Fy[3] / 10.0f) - 9000.0f;
 
-    tv.TV_U_Fz[0] = m2v->Fz_FL / 10.0f;
-    tv.TV_U_Fz[1] = m2v->Fz_FR / 10.0f;
-    tv.TV_U_Fz[2] = m2v->Fz_RL / 10.0f;
-    tv.TV_U_Fz[3] = m2v->Fz_RR / 10.0f;
+    tv.TV_U_Fz[0] = m2v->Fz[0] / 10.0f;
+    tv.TV_U_Fz[1] = m2v->Fz[1] / 10.0f;
+    tv.TV_U_Fz[2] = m2v->Fz[2] / 10.0f;
+    tv.TV_U_Fz[3] = m2v->Fz[3] / 10.0f;
 
     Torque_Vectoring_step(tv.Torque_Vectoring_MPtr,
         tv.TV_U_Vx_des, tv.TV_U_Vx, tv.TV_U_Vy,
@@ -208,9 +208,9 @@ void *thread_net_rx(void *arg)
             packet_count++;
             if (DEBUG_ENABLE && (packet_count % 100) == 0)
             {
-                DEBUG_LOG("[MATLAB pkt #%d] seq=%u Vx=%.2f Vx_wheel=%.2f Vy=%.2f\n",
+                DEBUG_LOG("[MATLAB pkt #%d] seq=%u Vx=%.2f Vy=%.2f\n",
                        packet_count, m2v->seq,
-                       m2v->Vx / 100.0f, m2v->Vx_wheel, m2v->Vy / 100.0f);
+                       m2v->Vx / 100.0f, m2v->Vy / 100.0f);
             }
         }
     }
@@ -259,7 +259,6 @@ void *thread_control(void *arg)
             .header = CORNER_FRAME_HEADER,
             .Vx = (uint16_t)(cur_matlab.Vx * 100),
             .Vx_des = cur_steer.accel,
-            .Vx_wheel = cur_matlab.Vx_wheel,
             .brake = cur_steer.brake,
             .Mzd = (uint32_t)(tv.TV_Y_Mzd + 40000)
         };
@@ -269,6 +268,7 @@ void *thread_control(void *arg)
             corner_frame.id = i;
             corner_frame.Tm_ref  = (uint16_t)((tv.TV_Y_Tm[i] + 120.0f) * 100.0f);
             corner_frame.Ang_ref = (uint16_t)((fwis.output[i] + 40.0f) * 100.0f);
+            corner_frame.Vx_wheel = cur_matlab.Vx_wheel[i];
             corner_frame.seq = seq;
             udp_comm_send(&tx_corner[i], &tx_corner[i].addr,
                           &corner_frame, sizeof(corner_frame), MSG_DONTWAIT);
