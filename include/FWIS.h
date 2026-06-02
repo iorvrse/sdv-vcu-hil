@@ -17,6 +17,6 @@ typedef struct
 } fwis_t;
 
 void FWIS_Init(fwis_t *fwis, float wb, float cg, float wt, float Hwb, float Hwt);
-void FWIS_Compute(fwis_t *fwis, float steer_deg, float Vx);
+void FWIS_Compute(fwis_t *fwis, float *steer_deg, float *Vx);
 
 #endif

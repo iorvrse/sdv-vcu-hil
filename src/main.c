@@ -73,10 +73,10 @@ void sigint_handler(int dummy)
     keep_running = 0;
 }
 
-// Torque Vectoring (unchanged)
-void Torque_Vectoring_Compute(const matlab_recv_frame_t *m2v)
+// Torque Vectoring
+void Torque_Vectoring_Compute(const matlab_recv_frame_t *m2v, float *vx_des)
 {
-    tv.TV_U_Vx_des  = m2v->Vx_des / 100.0f;
+    tv.TV_U_Vx_des  = *vx_des;
     tv.TV_U_Vx      = m2v->Vx / 100.0f;
     tv.TV_U_Vy      = m2v->Vy / 100.0f;
 
@@ -208,9 +208,9 @@ void *thread_net_rx(void *arg)
             packet_count++;
             if (DEBUG_ENABLE && (packet_count % 100) == 0)
             {
-                DEBUG_LOG("[MATLAB pkt #%d] seq=%u Vx=%.2f Vx_des=%.2f Vy=%.2f\n",
+                DEBUG_LOG("[MATLAB pkt #%d] seq=%u Vx=%.2f Vx_wheel=%.2f Vy=%.2f\n",
                        packet_count, m2v->seq,
-                       m2v->Vx / 100.0f, m2v->Vx_des / 100.0f, m2v->Vy / 100.0f);
+                       m2v->Vx / 100.0f, m2v->Vx_wheel, m2v->Vy / 100.0f);
             }
         }
     }
@@ -238,28 +238,30 @@ void *thread_control(void *arg)
     {
         clock_gettime(CLOCK_MONOTONIC, &cycle_start);  // for jitter measurement
 
-        // Latest steer
-        int steer_idx_local = atomic_load_explicit(&steer_idx, memory_order_acquire);
-        steer_sample_t cur_steer = steer_buf[steer_idx_local];
-        float steer_deg = (float)cur_steer.steer / 100.0f;
-
         // Latest MATLAB
         int matlab_idx_local = atomic_load_explicit(&matlab_idx, memory_order_acquire);
         matlab_recv_frame_t cur_matlab = matlab_buf[matlab_idx_local];
 
+        // Latest steer
+        int steer_idx_local = atomic_load_explicit(&steer_idx, memory_order_acquire);
+        steer_sample_t cur_steer = steer_buf[steer_idx_local];
+        float steer_deg = (float)cur_steer.steer / 100.0f;
+        float vx_des = (float)cur_steer.accel / 100.0f;
+        float vx_steer = cur_matlab.Vx / 100.0f;
+
         // Compute
-        FWIS_Compute(&fwis, steer_deg, cur_matlab.Vx / 100.0f);
-        Torque_Vectoring_Compute(&cur_matlab);
+        FWIS_Compute(&fwis, &steer_deg, &vx_steer);
+        Torque_Vectoring_Compute(&cur_matlab, &vx_des);
 
         // Send to corners
         seq++;
-        corner_send_frame_t corner_frame =
-        {
+        corner_send_frame_t corner_frame = {
             .header = CORNER_FRAME_HEADER,
-            .Vx = cur_matlab.Vx,
-            .Vx_des = cur_matlab.Vx_des,
-            .Vx_wheel = 0,  // FIXME
-            .Mzd = (uint32_t)(tv.TV_Y_Mzd)
+            .Vx = (uint16_t)(cur_matlab.Vx * 100),
+            .Vx_des = cur_steer.accel,
+            .Vx_wheel = cur_matlab.Vx_wheel,
+            .brake = cur_steer.brake,
+            .Mzd = (uint32_t)(tv.TV_Y_Mzd + 40000)
         };
 
         for (int i = 0; i < CORNER_COUNT; i++)

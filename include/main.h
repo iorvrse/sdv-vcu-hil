@@ -36,8 +36,8 @@ typedef struct __attribute__((packed))
 {
     uint8_t header;
     uint8_t id;
-    uint16_t Vx_des;
     uint16_t Vx;
+    uint16_t Vx_wheel;
     uint16_t Vy;
     uint16_t angWheel_FL;
     uint16_t angWheel_FR;
@@ -65,6 +65,7 @@ typedef struct __attribute__((packed))
     uint16_t Vx_des;
     uint16_t Ang_ref;
     uint32_t Mzd;
+    uint8_t brake;
     uint8_t seq;
 } corner_send_frame_t;
 
