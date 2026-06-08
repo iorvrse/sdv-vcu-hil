@@ -10,10 +10,12 @@
 #define MATLAB_PORT 4093
 #define VCU_PORT    5055
 
-#define MATLAB_FRAME_HEADER 0xAA
-#define CORNER_FRAME_HEADER 0xCA
+#define MATLAB_FRAME_HEADER 0xAC
+#define CORNER_FRAME_HEADER 0xCB
+#define MATLAB_BRAKE_HEADER 0xCA
 
 #define MATLAB_FRAME_ID 0x05
+#define MATLAB_BRAKE_ID 0x06
 
 // 4WIS
 #define FWIS_WB     3.1f
@@ -56,7 +58,6 @@ typedef struct __attribute__((packed))
     uint16_t Vx_des;
     uint16_t Ang_ref;
     uint32_t Mzd;
-    uint8_t brake;
     uint8_t seq;
 } corner_send_frame_t;
 
@@ -85,5 +86,13 @@ typedef struct
     real_T TV_Y_Ca[2];
     real_T TV_Y_beta;
 } torque_vectoring_t;
+
+typedef struct __attribute__((packed))
+{
+    uint8_t header;
+    uint8_t id;
+    uint8_t brake;
+    uint8_t seq;
+} vcu_brake_matlab_frame_t;
 
 #endif // MAIN_H

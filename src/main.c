@@ -45,6 +45,10 @@ udp_sock_t tx_matlab;
 
 static volatile int keep_running = 1;
 
+// Atomic Counters to monitor RX frequency (Hz)
+static atomic_uint_fast32_t rx_matlab_count = 0;
+static atomic_uint_fast32_t rx_steer_count  = 0;
+
 static atomic_uint_fast8_t steer_idx = 0;
 typedef struct {
     uint8_t brake;
@@ -122,9 +126,9 @@ void *thread_steer_reader(void *arg)
     }
 
     steer_data_t moduleData;
-    int sample_count = 0;
-    struct timespec last_ts = {0};
-    printf("[THREAD] USB steer active.\n");
+    
+    // Print disabled to prevent console conflict with the Dashboard
+    // printf("[THREAD] USB steer active.\n");
 
     while (keep_running)
     {
@@ -139,26 +143,9 @@ void *thread_steer_reader(void *arg)
             steer_buf[next].steer = moduleData.steer;
             clock_gettime(CLOCK_MONOTONIC_RAW, &steer_buf[next].ts);
             atomic_store_explicit(&steer_idx, next, memory_order_release);
-
-            // DEBUG: log every 100th sample to show steer data & rate
-            sample_count++;
-            if (DEBUG_ENABLE && (sample_count % 100) == 0)
-            {
-                long dt_us = 0;
-                if (last_ts.tv_sec)
-                {
-                    long dsec = steer_buf[next].ts.tv_sec - last_ts.tv_sec;
-                    long dnsec = steer_buf[next].ts.tv_nsec - last_ts.tv_nsec;
-                    dt_us = dsec * 1000000L + dnsec / 1000L;
-                }
-                last_ts = steer_buf[next].ts;
-                DEBUG_LOG("[Steer #%d] brake=%u accel=%u steer=%.2f°  dt=%ld us\n",
-                       sample_count,
-                       moduleData.brake,
-                       moduleData.accel,
-                       (float)moduleData.steer / 100.0f,
-                       dt_us);
-            }
+            
+            // Increment RX Counter
+            atomic_fetch_add_explicit(&rx_steer_count, 1, memory_order_relaxed);
         }
     }
 
@@ -176,9 +163,9 @@ void *thread_net_rx(void *arg)
     uint8_t rx_buf[1024];
     struct sockaddr_in src;
     ssize_t n;
-    int packet_count = 0;
 
-    printf("[THREAD] Network RX active.\n");
+    // Print disabled to prevent console conflict with the Dashboard
+    // printf("[THREAD] Network RX active.\n");
 
     while (keep_running)
     {
@@ -203,15 +190,9 @@ void *thread_net_rx(void *arg)
             uint_fast8_t next = 1 - atomic_load_explicit(&matlab_idx, memory_order_acquire);
             memcpy(&matlab_buf[next], m2v, sizeof(matlab_recv_frame_t));
             atomic_store_explicit(&matlab_idx, next, memory_order_release);
-
-            // DEBUG: log every 100th MATLAB packet (about 10 Hz if MATLAB sends at 1 kHz)
-            packet_count++;
-            if (DEBUG_ENABLE && (packet_count % 100) == 0)
-            {
-                DEBUG_LOG("[MATLAB pkt #%d] seq=%u Vx=%.2f Vy=%.2f\n",
-                       packet_count, m2v->seq,
-                       m2v->Vx / 100.0f, m2v->Vy / 100.0f);
-            }
+            
+            // Increment RX Counter
+            atomic_fetch_add_explicit(&rx_matlab_count, 1, memory_order_relaxed);
         }
     }
 
@@ -229,10 +210,22 @@ void *thread_control(void *arg)
     clock_gettime(CLOCK_MONOTONIC, &thread_ts);
     uint8_t seq = 0;
     uint32_t cycle = 0;
-    const uint32_t debug_interval = 100;   // print every 100 cycles (200 ms)
+    const uint32_t debug_interval = 100;   // print every 100 cycles (100 ms)
     struct timespec cycle_start;
 
-    printf("[THREAD] Control active (1 ms period).\n");
+    // Buffers to capture transmit (TX) status
+    ssize_t tx_matlab_status = 0;
+    int     tx_matlab_err    = 0;
+    
+    ssize_t tx_corner_status[CORNER_COUNT] = {0};
+    int     tx_corner_err[CORNER_COUNT]    = {0};
+
+    // Buffers to calculate receive speed (RX Rate)
+    uint32_t last_rx_matlab = 0;
+    uint32_t last_rx_steer  = 0;
+
+    // Clear the terminal screen on startup
+    printf("\033[2J"); 
 
     while (keep_running)
     {
@@ -253,27 +246,42 @@ void *thread_control(void *arg)
         FWIS_Compute(&fwis, &steer_deg, &vx_steer);
         Torque_Vectoring_Compute(&cur_matlab, &vx_des);
 
-        // Send to corners
+        // Increment Sequence
         seq++;
+
+        // 1. SEND BRAKE TO MATLAB
+        vcu_brake_matlab_frame_t brake_frame = {
+            .header = MATLAB_BRAKE_HEADER,
+            .id     = MATLAB_BRAKE_ID,
+            .brake  = cur_steer.brake,
+            .seq    = seq
+        };
+        tx_matlab_status = udp_comm_send(&tx_matlab, &tx_matlab.addr, &brake_frame, sizeof(brake_frame), MSG_DONTWAIT);
+        if (tx_matlab_status < 0) tx_matlab_err = errno; 
+
+        // 2. SEND TORQUE TO CORNERS
         corner_send_frame_t corner_frame = {
             .header = CORNER_FRAME_HEADER,
             .Vx = (uint16_t)(cur_matlab.Vx * 100),
             .Vx_des = cur_steer.accel,
-            .brake = cur_steer.brake,
             .Mzd = (uint32_t)(tv.TV_Y_Mzd + 40000)
         };
 
         for (int i = 0; i < CORNER_COUNT; i++)
         {
-            corner_frame.id = i;
+            corner_frame.id = i + 1; // ID starts from 1 for corners
             corner_frame.Tm_ref  = (uint16_t)((tv.TV_Y_Tm[i] + 120.0f) * 100.0f);
             corner_frame.Ang_ref = (uint16_t)((fwis.output[i] + 40.0f) * 100.0f);
             corner_frame.Vx_wheel = cur_matlab.Vx_wheel[i];
             corner_frame.seq = seq;
-            udp_comm_send(&tx_corner[i], &tx_corner[i].addr,
-                          &corner_frame, sizeof(corner_frame), MSG_DONTWAIT);
+            
+            tx_corner_status[i] = udp_comm_send(&tx_corner[i], &tx_corner[i].addr, &corner_frame, sizeof(corner_frame), MSG_DONTWAIT);
+            if (tx_corner_status[i] < 0) tx_corner_err[i] = errno; // Capture error per wheel
         }
 
+        // =========================================================================
+        // STATIC DEBUGGER DASHBOARD (NO SCROLLING)
+        // =========================================================================
         cycle++;
         if (DEBUG_ENABLE && (cycle % debug_interval) == 0)
         {
@@ -282,16 +290,68 @@ void *thread_control(void *arg)
             long jitter_us = (debug_ts.tv_sec - cycle_start.tv_sec) * 1000000L +
                              (debug_ts.tv_nsec - cycle_start.tv_nsec) / 1000L;
 
-            DEBUG_LOG("[Ctrl cycle %u] seq=%u steer=%.2f° Vx=%.2f "
-                   "Tm[Nm]: FL=%.2f FR=%.2f RL=%.2f RR=%.2f "
-                   "Mzd=%.2f Ang_ref[0]=%.2f° jitter=%ld us\n",
-                   cycle, seq, steer_deg, cur_matlab.Vx / 100.0f,
-                   tv.TV_Y_Tm[0], tv.TV_Y_Tm[1], tv.TV_Y_Tm[2], tv.TV_Y_Tm[3],
-                   tv.TV_Y_Mzd, fwis.output[0], jitter_us);
+            const char* corner_names[4] = {"FL", "FR", "RL", "RR"};
+
+            // Calculate incoming packet rate (Hz)
+            uint32_t current_rx_matlab = atomic_load_explicit(&rx_matlab_count, memory_order_relaxed);
+            uint32_t current_rx_steer  = atomic_load_explicit(&rx_steer_count, memory_order_relaxed);
+            
+            // Formula: (New Packets) * (1000 ms / debug_interval_ms)
+            uint32_t rate_matlab = (current_rx_matlab - last_rx_matlab) * (1000 / debug_interval);
+            uint32_t rate_steer  = (current_rx_steer - last_rx_steer) * (1000 / debug_interval);
+            
+            last_rx_matlab = current_rx_matlab;
+            last_rx_steer  = current_rx_steer;
+
+            // Lock cursor position to the top-left of the screen
+            DEBUG_LOG("\033[H\033[J"); 
+
+            DEBUG_LOG("======================================================================\n");
+            DEBUG_LOG("[VCU TELEMETRY] Control Loop: 1000Hz | Jitter: %-4ld us\n", jitter_us);
+            DEBUG_LOG("======================================================================\n");
+            
+            DEBUG_LOG("\n>>> RX: INCOMING DATA (RECEIVE) <<<\n");
+            DEBUG_LOG("----------------------------------------------------------------------\n");
+            if (rate_matlab > 0) {
+                DEBUG_LOG("  MATLAB CARSIM : [ACTIVE ] %-4u Hz | Total Pkt: %-6u | Seq: %-3u\n", rate_matlab, current_rx_matlab, cur_matlab.seq);
+            } else {
+                DEBUG_LOG("  MATLAB CARSIM : [WAITING] No incoming data (0 Hz)\n");
+            }
+            
+            if (rate_steer > 0) {
+                DEBUG_LOG("  PXN STEER USB : [ACTIVE ] %-4u Hz | Total Pkt: %-6u\n", rate_steer, current_rx_steer);
+            } else {
+                DEBUG_LOG("  PXN STEER USB : [WAITING] Steering not detected / idle (0 Hz)\n");
+            }
+            
+            DEBUG_LOG("\n>>> COMPUTATION: SENSOR STATE <<<\n");
+            DEBUG_LOG("----------------------------------------------------------------------\n");
+            DEBUG_LOG("  Steer: %-6.2f° | Accel: %-5.2f | Brake: %-1.2f | Vx_Sim: %-5.2f km/h\n", 
+                      steer_deg, vx_des, cur_steer.brake / 100.0f, cur_matlab.Vx / 100.0f);
+            
+            DEBUG_LOG("\n>>> TX: OUTGOING DATA (TRANSMIT) <<<\n");
+            DEBUG_LOG("----------------------------------------------------------------------\n");
+            if (tx_matlab_status > 0) {
+                DEBUG_LOG("  TO MATLAB     : [SUCCESS] Brake Frame sent (Seq: %-3u)\n", seq);
+            } else {
+                DEBUG_LOG("  TO MATLAB     : [FAILED ] Error: %s\n", strerror(tx_matlab_err));
+            }
+            
+            DEBUG_LOG("  TO STM32 CORNER:\n");
+            for (int i = 0; i < CORNER_COUNT; i++) {
+                if (tx_corner_status[i] > 0) {
+                    DEBUG_LOG("  %-2s (ID %d)     : [SUCCESS] | Tm_ref: %-7.2f Nm | Ang_ref: %-7.2f°\n", 
+                              corner_names[i], i, tv.TV_Y_Tm[i], fwis.output[i]);
+                } else {
+                    DEBUG_LOG("  %-2s (ID %d)     : [FAILED ] | Error: %s\n", 
+                              corner_names[i], i, strerror(tx_corner_err[i]));
+                }
+            }
+            DEBUG_LOG("======================================================================\n");
         }
 
-        // 1 ms sleep
-        thread_ts.tv_nsec += 1000000;
+        // 2 ms sleep
+        thread_ts.tv_nsec += 2000000;
         if (thread_ts.tv_nsec >= 1000000000)
         {
             thread_ts.tv_sec++;
@@ -313,10 +373,8 @@ int main(void)
 
     printf("Initialize Vehicle Dynamics Model...\n");
 
-    // 4WIS
     FWIS_Init(&fwis, FWIS_WB, FWIS_CG, FWIS_WT, FWIS_HWB, FWIS_HWT);
 
-    // Torque vectoring
     RT_MODEL_Torque_Vectoring_T *const Torque_Vectoring_M = tv.Torque_Vectoring_MPtr;
     Torque_Vectoring_M->blockIO = &tv.Torque_Vectoring_B;
     Torque_Vectoring_M->dwork = &tv.Torque_Vectoring_DW;
@@ -330,7 +388,6 @@ int main(void)
         &tv.TV_Y_Mzd, &tv.TV_Y_r_des,
         &tv.TV_Y_beta_des, tv.TV_Y_Ca, &tv.TV_Y_beta);
 
-    // Zero double‑buffers
     steer_buf[0] = (steer_sample_t){0};
     steer_buf[1] = (steer_sample_t){0};
     atomic_store(&steer_idx, 0);
@@ -357,7 +414,8 @@ int main(void)
         udp_tx_set_target(&tx_corner[i], corner_ip[i], corner_port[i]);
     }
 
-    if (udp_tx_init(&tx_matlab, MATLAB_PORT, 0, matlab_ip) < 0)
+    // Set local_port parameter to 0 for MATLAB (PC) sender to use a random OS port (Prevents conflict)
+    if (udp_tx_init(&tx_matlab, 0, 0, matlab_ip) < 0)
     {
         fprintf(stderr, "Failed to create TX socket for Matlab\n");
         return -1;
@@ -393,9 +451,8 @@ int main(void)
 
     pthread_attr_destroy(&attr);
 
-    printf("==========================================\n");
-    printf(" VCU SDV RUNNING. Press Ctrl+C to stop\n");
-    printf("==========================================\n");
+    // Waiting prompt before dashboard appears
+    printf("Waiting for synchronization...\n");
 
     pthread_join(t_ctrl, NULL);
     pthread_join(t_net, NULL);
