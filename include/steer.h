@@ -13,7 +13,7 @@
 #define ACCEL_MAX_RAW   255
 #define STEER_MAX_RAW   32767
 
-#define BRAKE_MAX_SCALED  100     // 0.0 – 1.0
+#define BRAKE_MAX_SCALED  160     // 0.0 – 16.0
 #define ACCEL_MAX_SCALED  10000   // 0.0 – 100.0 km/h
 #define STEER_MAX_SCALED  4000    // -40.0 – 40.0 degree
 

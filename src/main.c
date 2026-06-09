@@ -249,7 +249,7 @@ void *thread_control(void *arg)
         // Increment Sequence
         seq++;
 
-        // 1. SEND BRAKE TO MATLAB
+        // SEND BRAKE TO MATLAB
         vcu_brake_matlab_frame_t brake_frame = {
             .header = MATLAB_BRAKE_HEADER,
             .id     = MATLAB_BRAKE_ID,
@@ -327,7 +327,7 @@ void *thread_control(void *arg)
             DEBUG_LOG("\n>>> COMPUTATION: SENSOR STATE <<<\n");
             DEBUG_LOG("----------------------------------------------------------------------\n");
             DEBUG_LOG("  Steer: %-6.2f° | Accel: %-5.2f | Brake: %-1.2f | Vx_Sim: %-5.2f km/h\n", 
-                      steer_deg, vx_des, cur_steer.brake / 100.0f, cur_matlab.Vx / 100.0f);
+                      steer_deg, vx_des, cur_steer.brake / 10.0f, cur_matlab.Vx / 100.0f);
             
             DEBUG_LOG("\n>>> TX: OUTGOING DATA (TRANSMIT) <<<\n");
             DEBUG_LOG("----------------------------------------------------------------------\n");
@@ -341,10 +341,10 @@ void *thread_control(void *arg)
             for (int i = 0; i < CORNER_COUNT; i++) {
                 if (tx_corner_status[i] > 0) {
                     DEBUG_LOG("  %-2s (ID %d)     : [SUCCESS] | Tm_ref: %-7.2f Nm | Ang_ref: %-7.2f°\n", 
-                              corner_names[i], i, tv.TV_Y_Tm[i], fwis.output[i]);
+                              corner_names[i], i+1, tv.TV_Y_Tm[i], fwis.output[i]);
                 } else {
                     DEBUG_LOG("  %-2s (ID %d)     : [FAILED ] | Error: %s\n", 
-                              corner_names[i], i, strerror(tx_corner_err[i]));
+                              corner_names[i], i+1, strerror(tx_corner_err[i]));
                 }
             }
             DEBUG_LOG("======================================================================\n");
