@@ -26,9 +26,7 @@
     #define DEBUG_LOG(fmt, ...)   ((void)0)
 #endif
 
-// ==========================================
-//  IP Config & state
-// ==========================================
+// IP Config
 const char *corner_ip[CORNER_COUNT] = {
     "10.252.62.51", // FL
     "10.252.62.52", // FR
@@ -127,9 +125,6 @@ void *thread_steer_reader(void *arg)
 
     steer_data_t moduleData;
     
-    // Print disabled to prevent console conflict with the Dashboard
-    // printf("[THREAD] USB steer active.\n");
-
     while (keep_running)
     {
         int ret = steer_process_events(my_steer, 50);
@@ -163,9 +158,6 @@ void *thread_net_rx(void *arg)
     uint8_t rx_buf[1024];
     struct sockaddr_in src;
     ssize_t n;
-
-    // Print disabled to prevent console conflict with the Dashboard
-    // printf("[THREAD] Network RX active.\n");
 
     while (keep_running)
     {
@@ -210,7 +202,7 @@ void *thread_control(void *arg)
     clock_gettime(CLOCK_MONOTONIC, &thread_ts);
     uint8_t seq = 0;
     uint32_t cycle = 0;
-    const uint32_t debug_interval = 100;   // print every 100 cycles (100 ms)
+    const uint32_t debug_interval = 100;
     struct timespec cycle_start;
 
     // Buffers to capture transmit (TX) status
@@ -259,7 +251,7 @@ void *thread_control(void *arg)
         tx_matlab_status = udp_comm_send(&tx_matlab, &tx_matlab.addr, &brake_frame, sizeof(brake_frame), MSG_DONTWAIT);
         if (tx_matlab_status < 0) tx_matlab_err = errno; 
 
-        // 2. SEND TORQUE TO CORNERS
+        // SEND TORQUE TO CORNERS
         corner_send_frame_t corner_frame = {
             .header = CORNER_FRAME_HEADER,
             .Vx = (uint16_t)(cur_matlab.Vx * 100),
@@ -279,9 +271,7 @@ void *thread_control(void *arg)
             if (tx_corner_status[i] < 0) tx_corner_err[i] = errno; // Capture error per wheel
         }
 
-        // =========================================================================
-        // STATIC DEBUGGER DASHBOARD (NO SCROLLING)
-        // =========================================================================
+        // DEBUGGER DASHBOARD
         cycle++;
         if (DEBUG_ENABLE && (cycle % debug_interval) == 0)
         {
@@ -296,7 +286,6 @@ void *thread_control(void *arg)
             uint32_t current_rx_matlab = atomic_load_explicit(&rx_matlab_count, memory_order_relaxed);
             uint32_t current_rx_steer  = atomic_load_explicit(&rx_steer_count, memory_order_relaxed);
             
-            // Formula: (New Packets) * (1000 ms / debug_interval_ms)
             uint32_t rate_matlab = (current_rx_matlab - last_rx_matlab) * (1000 / debug_interval);
             uint32_t rate_steer  = (current_rx_steer - last_rx_steer) * (1000 / debug_interval);
             

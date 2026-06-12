@@ -24,16 +24,6 @@
 #define FWIS_HWB    1.55f
 #define FWIS_HWT    0.745f
 
-typedef enum
-{
-    ID_FRONT_LEFT_WHEEL = 0x01,
-    ID_FRONT_RIGHT_WHEEL,
-    ID_REAR_LEFT_WHEEL,
-    ID_REAR_RIGHT_WHEEL,
-    ID_PC_MATLAB,
-    ID_VCU
-} DeviceID;
-
 typedef struct __attribute__((packed))
 {
     uint8_t header;
