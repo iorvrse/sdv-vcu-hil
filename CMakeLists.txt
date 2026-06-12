@@ -8,7 +8,6 @@ add_executable(rtlinux_app
     src/steer.c
     src/comm.c
     src/FWIS.c
-    src/speedControl.c
     src/Torque_Vectoring.c
     src/Torque_Vectoring_data.c
 )
