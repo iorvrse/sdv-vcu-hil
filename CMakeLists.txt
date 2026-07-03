@@ -1,25 +1,5 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.20)
+project(sdv-vcu-hil-linux VERSION 1.0 LANGUAGES C CXX)
 
-project(rtlinux_app VERSION 1.0.0 LANGUAGES C)
-
-# Collect all source files
-add_executable(rtlinux_app 
-    src/main.c
-    src/steer.c
-    src/comm.c
-    src/FWIS.c
-    src/Torque_Vectoring.c
-    src/Torque_Vectoring_data.c
-)
-
-# Include directories
-target_include_directories(rtlinux_app PRIVATE 
-    include
-)
-
-# Link libraries
-target_link_libraries(rtlinux_app
-    pthread
-    usb-1.0
-    m
-)
+# Add the Linux application subdirectory
+add_subdirectory(linux)

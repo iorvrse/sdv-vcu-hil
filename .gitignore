@@ -1,2 +1,4 @@
-build
 .vscode
+linux/build
+cortex-m/boards/mekmimx8qm/multicore_examples/rpmsg_lite_pingpong_rtos/sdk_master/cm4_core0/armgcc/debug
+cortex-m/boards/mekmimx8qm/multicore_examples/rpmsg_lite_pingpong_rtos/sdk_remote/cm4_core1/armgcc/debug

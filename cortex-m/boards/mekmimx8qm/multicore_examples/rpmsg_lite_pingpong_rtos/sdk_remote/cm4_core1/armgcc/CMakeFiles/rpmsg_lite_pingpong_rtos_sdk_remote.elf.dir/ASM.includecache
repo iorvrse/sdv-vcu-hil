@@ -1,0 +1,10 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/home/create/NIO/cortex-m/SDK_2_9_0_MIMX8QM6xxxFF/devices/MIMX8QM6/gcc/startup_MIMX8QM6_cm4_core1.S
+
