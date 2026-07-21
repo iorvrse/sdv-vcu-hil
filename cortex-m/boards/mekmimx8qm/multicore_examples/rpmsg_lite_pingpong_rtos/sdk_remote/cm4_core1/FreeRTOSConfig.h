@@ -78,9 +78,9 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #define configUSE_DAEMON_TASK_STARTUP_HOOK      0
 
 /* Run time and task stats gathering related definitions. */
-#define configGENERATE_RUN_TIME_STATS           0
+#define configGENERATE_RUN_TIME_STATS           1
 #define configUSE_TRACE_FACILITY                1
-#define configUSE_STATS_FORMATTING_FUNCTIONS    0
+#define configUSE_STATS_FORMATTING_FUNCTIONS    1
 
 /* Task aware debugging. */
 #define configRECORD_STACK_HIGH_ADDRESS         1
@@ -163,10 +163,10 @@ standard names. */
 #define xPortPendSVHandler PendSV_Handler
 #define xPortSysTickHandler SysTick_Handler
 
-// extern void App_ConfigureTimerForRuntimeStats(void);
-// extern uint32_t App_GetTimerForRuntimeStats(void);
+extern void App_ConfigureTimerForRuntimeStats(void);
+extern uint32_t App_GetTimerForRuntimeStats(void);
 
-// #define portCONFIGURE_TIMER_FOR_RUN_TIME_STATS() App_ConfigureTimerForRuntimeStats()
-// #define portGET_RUN_TIME_COUNTER_VALUE()         App_GetTimerForRuntimeStats()
+#define portCONFIGURE_TIMER_FOR_RUN_TIME_STATS() App_ConfigureTimerForRuntimeStats()
+#define portGET_RUN_TIME_COUNTER_VALUE()         App_GetTimerForRuntimeStats()
 
 #endif /* FREERTOS_CONFIG_H */

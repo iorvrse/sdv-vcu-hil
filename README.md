@@ -87,7 +87,7 @@ Sent by the VCU to MATLAB (`10.252.62.212:4093`). Identified by `header = MATLAB
 
 ### 4.5 VCU → Zone Controller (UDP, `corner_send_frame_t`)
 
-Sent per-corner to each Zone Controller's IP/port (see §4.1). Identified by `header = CORNER_FRAME_HEADER (0xCB)`.
+Sent per-corner to each Zone Controller's IP/port (see 4.1). Identified by `header = CORNER_FRAME_HEADER (0xCB)`.
 
 | Field | Type | Description |
 |-------|------|--------------|

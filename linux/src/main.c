@@ -12,20 +12,21 @@
 #include <errno.h>
 #include <time.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <linux/rpmsg.h>
 
 #include "comm.h"
 #include "steer.h"
 
-//  Debug logging control
+// Debug logging control
 #define DEBUG_ENABLE  1
 #if DEBUG_ENABLE
-    #define DEBUG_LOG(fmt, ...)   printf("[DBG] " fmt, ##__VA_ARGS__)
+    #define DEBUG_LOG(fmt, ...)   printf(fmt, ##__VA_ARGS__)
 #else
     #define DEBUG_LOG(fmt, ...)   ((void)0)
 #endif
 
-//  IP Config & state
+// IP Config and state
 const char *corner_ip[CORNER_COUNT] = {
     "10.252.62.51", // FL
     "10.252.62.52", // FR
@@ -40,39 +41,23 @@ udp_sock_t rx_vcu;
 udp_sock_t tx_corner[CORNER_COUNT];
 udp_sock_t tx_matlab;
 
-// RPMsg Character Device File Descriptors
+// RPMsg character device file descriptors
 int fd_rpmsg_tv = -1;
 int fd_rpmsg_fwis = -1;
 
 static volatile int keep_running = 1;
 
+// Lock-free double buffers for asynchronous network and USB inputs
 static steer_sample_t steer_buf[2];
-
-// Atomic Counters to monitor RX frequency (Hz)
-static atomic_uint_fast32_t rx_matlab_count = 0;
-static atomic_uint_fast32_t rx_steer_count  = 0;
-static atomic_uint_fast32_t rx_tv_count     = 0;
-static atomic_uint_fast32_t rx_fwis_count   = 0;
-
-// Double Buffers for Lock-Free Thread Sync
 static atomic_uint_fast8_t steer_idx = 0;
 
 static matlab_recv_frame_t matlab_buf[2];
 static atomic_uint_fast8_t matlab_idx = 0;
 
-static rpmsg_tv_out_t tv_buf[2];
-static atomic_uint_fast8_t tv_idx = 0;
-
-static rpmsg_fwis_out_t fwis_buf[2];
-static atomic_uint_fast8_t fwis_idx = 0;
-
-// RPMsg Char Device Initialization Helper
+// RPMsg char device initialization
 int init_rpmsg_char(const char *dev_path)
 {
-    // Open in standard Read/Write mode.
-    // Without O_NONBLOCK, read() operations will naturally block 
-    // keeping the dedicated RX threads asleep until data arrives.
-    int fd = open(dev_path, O_RDWR);
+    int fd = open(dev_path, O_RDWR | O_NONBLOCK);
     if (fd < 0) {
         return -1;
     }
@@ -87,12 +72,11 @@ static void sleep_ms(long ms)
 
 void sigint_handler(int dummy)
 {
+    (void)dummy;
     keep_running = 0;
 }
 
-// =================================================================
-// Steer thread (USB)
-// =================================================================
+// Steering wheel input polling thread
 void *thread_steer_reader(void *arg)
 {
     (void)arg;
@@ -117,10 +101,7 @@ void *thread_steer_reader(void *arg)
             steer_buf[next].brake = moduleData.brake;
             steer_buf[next].accel = moduleData.accel;
             steer_buf[next].steer = moduleData.steer;
-            clock_gettime(CLOCK_MONOTONIC_RAW, &steer_buf[next].ts);
             atomic_store_explicit(&steer_idx, next, memory_order_release);
-            
-            atomic_fetch_add_explicit(&rx_steer_count, 1, memory_order_relaxed);
         }
     }
 
@@ -128,9 +109,7 @@ void *thread_steer_reader(void *arg)
     return NULL;
 }
 
-// =================================================================
-// Network receiver thread
-// =================================================================
+// Matlab UDP receiver thread
 void *thread_net_rx(void *arg)
 {
     (void)arg;
@@ -140,15 +119,11 @@ void *thread_net_rx(void *arg)
 
     while (keep_running)
     {
-        n = udp_comm_recv(&rx_vcu, rx_buf, sizeof(rx_buf), &src, 0);
+        n = udp_comm_recv(&rx_vcu, rx_buf, sizeof(rx_buf), &src, MSG_DONTWAIT);
 
         if (n <= 0)
         {
-            if (errno == EAGAIN || errno == EWOULDBLOCK)
-            {
-                sleep_ms(1);
-                continue;
-            }
+            sleep_ms(1);
             continue;
         }
 
@@ -160,102 +135,38 @@ void *thread_net_rx(void *arg)
             uint_fast8_t next = 1 - atomic_load_explicit(&matlab_idx, memory_order_acquire);
             memcpy(&matlab_buf[next], m2v, sizeof(matlab_recv_frame_t));
             atomic_store_explicit(&matlab_idx, next, memory_order_release);
-            
-            atomic_fetch_add_explicit(&rx_matlab_count, 1, memory_order_relaxed);
         }
     }
     return NULL;
 }
 
-// =================================================================
-// IPC Receiver Thread: Cortex-M4_0 (Torque Vectoring)
-// =================================================================
-void *thread_tv_rx(void *arg)
-{
-    (void)arg;
-    rpmsg_tv_out_t res;
-    
-    while (keep_running)
-    {
-        // Block indefinitely until M4_0 computes the frame
-        int bytes = read(fd_rpmsg_tv, &res, sizeof(rpmsg_tv_out_t));
-        
-        if (bytes == sizeof(rpmsg_tv_out_t))
-        {
-            uint_fast8_t next = 1 - atomic_load_explicit(&tv_idx, memory_order_acquire);
-            memcpy(&tv_buf[next], &res, sizeof(rpmsg_tv_out_t));
-            atomic_store_explicit(&tv_idx, next, memory_order_release);
-            
-            atomic_fetch_add_explicit(&rx_tv_count, 1, memory_order_relaxed);
-        }
-    }
-    return NULL;
-}
-
-// =================================================================
-// IPC Receiver Thread: Cortex-M4_1 (FWIS)
-// =================================================================
-void *thread_fwis_rx(void *arg)
-{
-    (void)arg;
-    rpmsg_fwis_out_t res;
-
-    while (keep_running)
-    {
-        // Block indefinitely until M4_1 computes the frame
-        int bytes = read(fd_rpmsg_fwis, &res, sizeof(rpmsg_fwis_out_t));
-        
-        if (bytes == sizeof(rpmsg_fwis_out_t))
-        {
-            uint_fast8_t next = 1 - atomic_load_explicit(&fwis_idx, memory_order_acquire);
-            memcpy(&fwis_buf[next], &res, sizeof(rpmsg_fwis_out_t));
-            atomic_store_explicit(&fwis_idx, next, memory_order_release);
-            
-            atomic_fetch_add_explicit(&rx_fwis_count, 1, memory_order_relaxed);
-        }
-    }
-    return NULL;
-}
-
-// =================================================================
-// Control thread (Routing & Dispatch Manager)
-// =================================================================
+// Main real-time dispatch and routing loop
 void *thread_control(void *arg)
 {
     (void)arg;
 
-    struct timespec thread_ts;
-    clock_gettime(CLOCK_MONOTONIC, &thread_ts);
     uint8_t seq = 0;
     uint32_t cycle = 0;
-    const uint32_t debug_interval = 100;
-    struct timespec cycle_start;
+    const uint32_t debug_interval = 500; // Increased to prevent flickering at high speeds
+    
+    printf("\033[2J");
 
-    ssize_t tx_matlab_status = 0;
-    int     tx_matlab_err    = 0;
-    ssize_t tx_corner_status[CORNER_COUNT] = {0};
-    int     tx_corner_err[CORNER_COUNT]    = {0};
-
-    uint32_t last_rx_matlab = 0;
-    uint32_t last_rx_steer  = 0;
-    uint32_t last_rx_tv     = 0;
-    uint32_t last_rx_fwis   = 0;
-
-    printf("\033[2J"); 
+    // Initialize blank results so we don't send garbage if M4 is slow on boot
+    rpmsg_tv_out_t cur_tv_res = {0};
+    rpmsg_fwis_out_t cur_fwis_res = {0};
 
     while (keep_running)
     {
-        clock_gettime(CLOCK_MONOTONIC, &cycle_start);
         seq++;
 
-        // Fetch Latest Inputs (From UDP/USB Threads)
+        // Read latest asynchronous inputs
         int matlab_idx_local = atomic_load_explicit(&matlab_idx, memory_order_acquire);
         matlab_recv_frame_t cur_matlab = matlab_buf[matlab_idx_local];
 
         int steer_idx_local = atomic_load_explicit(&steer_idx, memory_order_acquire);
         steer_sample_t cur_steer = steer_buf[steer_idx_local];
 
-        // Dispatch IPC Commands to Hardware (Non-Blocking)
+        // Format and send jobs to Cortex-M coprocessors
         rpmsg_tv_in_t tv_job;
         tv_job.Vx_des  = cur_steer.accel;
         tv_job.Vx = cur_matlab.Vx;
@@ -278,28 +189,40 @@ void *thread_control(void *arg)
         fwis_job.steer_angle = cur_steer.steer + 4000;
         fwis_job.Vx          = cur_matlab.Vx;
 
-        write(fd_rpmsg_tv, &tv_job, sizeof(rpmsg_tv_in_t));
-        write(fd_rpmsg_fwis, &fwis_job, sizeof(rpmsg_fwis_in_t));
+        ssize_t w1 = write(fd_rpmsg_tv, &tv_job, sizeof(rpmsg_tv_in_t));
+        ssize_t w2 = write(fd_rpmsg_fwis, &fwis_job, sizeof(rpmsg_fwis_in_t));
+        (void)w1; (void)w2;
 
-        // Send Brake to MATLAB
+        struct pollfd pfds[2] = {
+            { .fd = fd_rpmsg_tv, .events = POLLIN },
+            { .fd = fd_rpmsg_fwis, .events = POLLIN }
+        };
+
+        // Wait up to 1ms for the coprocessors to finish computing
+        int poll_ret = poll(pfds, 2, 1); 
+
+        if (poll_ret > 0)
+        {
+            if (pfds[0].revents & POLLIN)
+            {
+                read(fd_rpmsg_tv, &cur_tv_res, sizeof(cur_tv_res));
+            }
+            if (pfds[1].revents & POLLIN)
+            {
+                read(fd_rpmsg_fwis, &cur_fwis_res, sizeof(cur_fwis_res));
+            }
+        }
+
+        // Transmit brake status to Matlab
         vcu_brake_matlab_frame_t brake_frame = {
             .header = MATLAB_BRAKE_HEADER,
             .id     = MATLAB_BRAKE_ID,
             .brake  = cur_steer.brake,
             .seq    = seq
         };
+        udp_comm_send(&tx_matlab, &tx_matlab.addr, &brake_frame, sizeof(brake_frame), MSG_DONTWAIT);
 
-        tx_matlab_status = udp_comm_send(&tx_matlab, &tx_matlab.addr, &brake_frame, sizeof(brake_frame), MSG_DONTWAIT);
-        if (tx_matlab_status < 0) tx_matlab_err = errno;
-
-        // Fetch Latest Coprocessor Results (From IPC Threads)
-        int tv_idx_local = atomic_load_explicit(&tv_idx, memory_order_acquire);
-        rpmsg_tv_out_t cur_tv_res = tv_buf[tv_idx_local];
-
-        int fwis_idx_local = atomic_load_explicit(&fwis_idx, memory_order_acquire);
-        rpmsg_fwis_out_t cur_fwis_res = fwis_buf[fwis_idx_local];
-
-        // Route Complete Package to STM32 Zone Controllers
+        // Map fresh values and dispatch to STM32 Corner Controllers
         corner_send_frame_t corner_frame = {
             .header = CORNER_FRAME_HEADER,
             .Vx     = cur_matlab.Vx,
@@ -312,106 +235,49 @@ void *thread_control(void *arg)
             corner_frame.id = i + 1;
             corner_frame.Vx_wheel = cur_matlab.Vx_wheel[i];
             corner_frame.seq = seq;
-            
-            // Map values directly from asynchronous answers
             corner_frame.Tm_ref  = cur_tv_res.Tm_ref[i];
             corner_frame.Ang_ref = cur_fwis_res.Ang_ref[i];
-            
-            tx_corner_status[i] = udp_comm_send(&tx_corner[i], &tx_corner[i].addr, &corner_frame, sizeof(corner_frame), MSG_DONTWAIT);
-            if (tx_corner_status[i] < 0) tx_corner_err[i] = errno;
+
+            udp_comm_send(&tx_corner[i], &tx_corner[i].addr, &corner_frame, sizeof(corner_frame), MSG_DONTWAIT);
         }
 
-        // STATIC DEBUGGER DASHBOARD
+        // Live Debug Dashboard
         cycle++;
         if (DEBUG_ENABLE && (cycle % debug_interval) == 0)
         {
-            struct timespec debug_ts;
-            clock_gettime(CLOCK_MONOTONIC, &debug_ts);
-            long jitter_us = (debug_ts.tv_sec - cycle_start.tv_sec) * 1000000L +
-                             (debug_ts.tv_nsec - cycle_start.tv_nsec) / 1000L;
-
-            const char* corner_names[4] = {"FL", "FR", "RL", "RR"};
-
-            // Read hardware frequencies
-            uint32_t current_rx_matlab = atomic_load_explicit(&rx_matlab_count, memory_order_relaxed);
-            uint32_t current_rx_steer  = atomic_load_explicit(&rx_steer_count, memory_order_relaxed);
-            uint32_t current_rx_tv     = atomic_load_explicit(&rx_tv_count, memory_order_relaxed);
-            uint32_t current_rx_fwis   = atomic_load_explicit(&rx_fwis_count, memory_order_relaxed);
+            DEBUG_LOG("\033[H\033[J");
+            DEBUG_LOG("=== VCU DASHBOARD (MAX SPEED) ===\n");
             
-            uint32_t rate_matlab = (current_rx_matlab - last_rx_matlab) * (1000 / debug_interval);
-            uint32_t rate_steer  = (current_rx_steer - last_rx_steer) * (1000 / debug_interval);
-            uint32_t rate_tv     = (current_rx_tv - last_rx_tv) * (1000 / debug_interval);
-            uint32_t rate_fwis   = (current_rx_fwis - last_rx_fwis) * (1000 / debug_interval);
+            // Format raw integer steering value to real degrees (-40.00 to 40.00)
+            DEBUG_LOG("[STEER IN]  Ang: %-6.2f deg | Accel: %-5d | Brake: %-5d\n", 
+                      cur_steer.steer / 100.0f, cur_steer.accel, cur_steer.brake);
             
-            last_rx_matlab = current_rx_matlab;
-            last_rx_steer  = current_rx_steer;
-            last_rx_tv     = current_rx_tv;
-            last_rx_fwis   = current_rx_fwis;
-
-            DEBUG_LOG("\033[H\033[J"); 
-
-            DEBUG_LOG("======================================================================\n");
-            DEBUG_LOG("[VCU TELEMETRY] Control Loop: 1000Hz | Jitter: %-4ld us\n", jitter_us);
-            DEBUG_LOG("======================================================================\n");
-            
-            DEBUG_LOG("\n>>> RX: INCOMING DATA (RECEIVE) <<<\n");
-            DEBUG_LOG("----------------------------------------------------------------------\n");
-            
-            if (rate_matlab > 0) DEBUG_LOG("  MATLAB CARSIM : [ACTIVE ] %-4u Hz | Total Pkt: %-6u\n", rate_matlab, current_rx_matlab);
-            else DEBUG_LOG("  MATLAB CARSIM : [WAITING] No incoming data (0 Hz)\n");
-            
-            if (rate_steer > 0) DEBUG_LOG("  PXN STEER USB : [ACTIVE ] %-4u Hz | Total Pkt: %-6u\n", rate_steer, current_rx_steer);
-            else DEBUG_LOG("  PXN STEER USB : [WAITING] Steering not detected / idle (0 Hz)\n");
-            
-            DEBUG_LOG("\n>>> IPC: CORTEX-M COPROCESSOR STATUS <<<\n");
-            DEBUG_LOG("----------------------------------------------------------------------\n");
-            if (rate_tv > 0) DEBUG_LOG("  M4_0 (TV)     : [ACTIVE ] %-4u Hz | Mzd: %-6u\n", rate_tv, cur_tv_res.Mzd);
-            else DEBUG_LOG("  M4_0 (TV)     : [TIMEOUT] Node stalled or crashed (0 Hz)\n");
-
-            if (rate_fwis > 0) DEBUG_LOG("  M4_1 (FWIS)   : [ACTIVE ] %-4u Hz\n", rate_fwis);
-            else DEBUG_LOG("  M4_1 (FWIS)   : [TIMEOUT] Node stalled or crashed (0 Hz)\n");
-
-            DEBUG_LOG("\n>>> TX: OUTGOING DATA (TRANSMIT) <<<\n");
-            DEBUG_LOG("----------------------------------------------------------------------\n");
-            if (tx_matlab_status > 0) DEBUG_LOG("  TO MATLAB     : [SUCCESS] Brake Frame sent (Seq: %-3u)\n", seq);
-            else DEBUG_LOG("  TO MATLAB     : [FAILED ] Error: %s\n", strerror(tx_matlab_err));
-
-            DEBUG_LOG("  TO STM32 CORNER:\n");
-            for (int i = 0; i < CORNER_COUNT; i++)
-            {
-                if (tx_corner_status[i] > 0)
-                {
-                    DEBUG_LOG("  %-2s (ID %d)     : [SUCCESS] | Tm_ref: %-7d | Ang_ref: %-7d\n", 
-                              corner_names[i], i+1, corner_frame.Tm_ref, corner_frame.Ang_ref);
-                }
-                else
-                {
-                    DEBUG_LOG("  %-2s (ID %d)     : [FAILED ] | Error: %s\n", 
-                              corner_names[i], i+1, strerror(tx_corner_err[i]));
-                }
-            }
-            DEBUG_LOG("======================================================================\n");
+            // Decode Matlab integers
+            DEBUG_LOG("[MATLAB IN] Vx: %-6.2f m/s | Vy: %-6.2f m/s\n", 
+                      cur_matlab.Vx / 100.0f, 
+                      (cur_matlab.Vy / 100.0f) - 10.0f);
+                      
+            DEBUG_LOG("            Ang: %.2f, %.2f, %.2f, %.2f rad\n", 
+                      (cur_matlab.angWheel[0] / 1000.0f) - 0.7f, 
+                      (cur_matlab.angWheel[1] / 1000.0f) - 0.7f, 
+                      (cur_matlab.angWheel[2] / 1000.0f) - 0.7f, 
+                      (cur_matlab.angWheel[3] / 1000.0f) - 0.7f);
+                      
+            DEBUG_LOG("=================================\n");
         }
 
-        thread_ts.tv_nsec += 2000000; // 2 ms frame pacing
-        if (thread_ts.tv_nsec >= 1000000000)
-        {
-            thread_ts.tv_sec++;
-            thread_ts.tv_nsec -= 1000000000;
-        }
-        clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &thread_ts, NULL);
+        usleep(200); 
     }
 
     return NULL;
 }
 
-// =================================================================
-// Main Function
-// =================================================================
+// System entry point
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
     signal(SIGINT, sigint_handler);
+    signal(SIGTERM, sigint_handler);
 
     printf("Initialize IPC connections to Cortex-M4...\n");
 
@@ -427,7 +293,7 @@ int main(void)
         return -1;
     }
 
-    // Init Double Buffers
+    // Initialize network buffers
     steer_buf[0] = (steer_sample_t){0};
     steer_buf[1] = (steer_sample_t){0};
     atomic_store(&steer_idx, 0);
@@ -435,14 +301,6 @@ int main(void)
     memset(&matlab_buf[0], 0, sizeof(matlab_recv_frame_t));
     memset(&matlab_buf[1], 0, sizeof(matlab_recv_frame_t));
     atomic_store(&matlab_idx, 0);
-
-    memset(&tv_buf[0], 0, sizeof(rpmsg_tv_out_t));
-    memset(&tv_buf[1], 0, sizeof(rpmsg_tv_out_t));
-    atomic_store(&tv_idx, 0);
-
-    memset(&fwis_buf[0], 0, sizeof(rpmsg_fwis_out_t));
-    memset(&fwis_buf[1], 0, sizeof(rpmsg_fwis_out_t));
-    atomic_store(&fwis_idx, 0);
 
     printf("Initialize UDP network...\n");
 
@@ -469,13 +327,14 @@ int main(void)
     }
     udp_tx_set_target(&tx_matlab, matlab_ip, MATLAB_PORT);
 
+    // Lock memory to prevent swap delays in real-time execution
     if (mlockall(MCL_CURRENT | MCL_FUTURE) == -1)
     {
         printf("mlockall failed: %m\n");
         exit(-2);
     }
 
-    pthread_t t_steer, t_net, t_tv_rx, t_fwis_rx, t_ctrl;
+    pthread_t t_steer, t_net, t_ctrl;
     pthread_attr_t attr;
     struct sched_param param;
 
@@ -484,23 +343,17 @@ int main(void)
     pthread_attr_setinheritsched(&attr, PTHREAD_EXPLICIT_SCHED);
     pthread_attr_setstacksize(&attr, 65536);
 
-    // Launch I/O Polling Threads
-    param.sched_priority = 85;
+    // Launch background asynchronous I/O threads
+    param.sched_priority = 95;
     pthread_attr_setschedparam(&attr, &param);
     pthread_create(&t_steer, &attr, thread_steer_reader, NULL);
 
-    param.sched_priority = 80;
+    param.sched_priority = 93;
     pthread_attr_setschedparam(&attr, &param);
     pthread_create(&t_net, &attr, thread_net_rx, NULL);
 
-    // Launch IPC Receiver Threads
-    param.sched_priority = 90;
-    pthread_attr_setschedparam(&attr, &param);
-    pthread_create(&t_tv_rx, &attr, thread_tv_rx, NULL);
-    pthread_create(&t_fwis_rx, &attr, thread_fwis_rx, NULL);
-
-    // Launch Main Router
-    param.sched_priority = 95;
+    // Launch critical real-time routing control loop
+    param.sched_priority = 99;
     pthread_attr_setschedparam(&attr, &param);
     pthread_create(&t_ctrl, &attr, thread_control, NULL);
 
@@ -511,8 +364,6 @@ int main(void)
     pthread_join(t_ctrl, NULL);
     pthread_join(t_net, NULL);
     pthread_join(t_steer, NULL);
-    pthread_join(t_tv_rx, NULL);
-    pthread_join(t_fwis_rx, NULL);
 
     printf("\nShutting down the system...\n");
     udp_comm_close(&rx_vcu.sockfd);
